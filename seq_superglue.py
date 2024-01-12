@@ -152,10 +152,10 @@ if __name__ == '__main__':
     frame, ret = vs.next_frame()
     assert ret, 'Error when reading the first frame (try different --input?)'
 
-    frame_tensor = frame2tensor(frame, device)
-    last_data = matching.superpoint({'image': frame_tensor})
+    last_frame_tensor = frame2tensor(frame, device)
+    last_data = matching.superpoint({'image': last_frame_tensor})
     last_data = {k+'0': last_data[k] for k in keys}
-    last_data['image0'] = frame_tensor
+    last_data['image0'] = last_frame_tensor
     last_frame = frame
     last_image_id = 0
 
@@ -187,7 +187,6 @@ if __name__ == '__main__':
             break
         timer.update('data')
         stem0, stem1 = last_image_id, vs.i - 1
-
         frame_tensor = frame2tensor(frame, device)
         pred = matching({**last_data, 'image1': frame_tensor})
         kpts0 = last_data['keypoints0'][0].cpu().numpy()
@@ -256,6 +255,10 @@ if __name__ == '__main__':
             print('\nWriting image to {}'.format(out_file))
             cv2.imwrite(out_file, out)
             np.savez(data_out_file, kpt0=mkpts0,kpt1=mkpts1)
+        last_data = {k+'0': pred[k+'1'] for k in keys}
+        last_data['image0'] = frame_tensor
+        last_frame = frame
+        last_image_id = (vs.i - 1)
 
     cv2.destroyAllWindows()
     vs.cleanup()
