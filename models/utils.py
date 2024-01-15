@@ -550,6 +550,32 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
     return out
 
 
+def make_matching_plot(image0:np.ndarray, image1:np.ndarray, mkpts0,
+                        mkpts1, color=None, margin=10):
+    H0, W0 = image0.shape[:2]
+    H1, W1 = image1.shape[:2]
+    H, W = max(H0, H1), W0 + W1 + margin
+
+    out = np.zeros((H,W,3),dtype=np.uint8)
+    out[:H0, :W0,:] = image0
+    out[:H1, W0+margin:,:] = image1
+    # out = np.stack([out]*3, -1)
+
+    mkpts0, mkpts1 = np.round(mkpts0).astype(int), np.round(mkpts1).astype(int)
+    if color is None:
+        color = np.array(255*np.random.rand(len(mkpts0),3), dtype=np.int32)
+    # color = (np.array(color[:, :3])*255).astype(int)[:, ::-1]
+    for (x0, y0), (x1, y1), c in zip(mkpts0, mkpts1, color):
+        c = c.tolist()
+        cv2.line(out, (x0, y0), (x1 + margin + W0, y1),
+                 color=c, thickness=1, lineType=cv2.LINE_AA)
+        # display line end-points as circles
+        cv2.circle(out, (x0, y0), 2, c, -1, lineType=cv2.LINE_AA)
+        cv2.circle(out, (x1 + margin + W0, y1), 2, c, -1,
+                   lineType=cv2.LINE_AA)
+
+    return out
+
 def error_colormap(x):
     return np.clip(
         np.stack([2-x*2, x*2, np.zeros_like(x), np.ones_like(x)], -1), 0, 1)
