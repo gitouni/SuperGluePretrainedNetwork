@@ -56,17 +56,19 @@ from models.utils import (AverageTimer, VideoStreamer,
 
 torch.set_grad_enabled(False)
 import numpy as np
+from utils.utils import refresh_dir
+from seq_ransac import step_ransac
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='SuperGlue demo',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
-        '--input', type=str, default='0',
+        '--input', type=str, default='data/slip/screwdriver1/markered',
         help='ID of a USB webcam, URL of an IP camera, '
              'or path to an image directory or movie file')
     parser.add_argument(
-        '--output_dir', type=str, default=None,
+        '--output_dir', type=str, default='SPG/screwdriver1/None',
         help='Directory where to write output frames (If None, no output)')
 
     parser.add_argument(
@@ -104,17 +106,27 @@ if __name__ == '__main__':
     parser.add_argument(
         '--match_threshold', type=float, default=0.2,
         help='SuperGlue match threshold')
-
+    parser.add_argument(
+        "--save_png", action="store_true",
+        help="save debug figures of matching"
+    )
+    parser.add_argument(
+        "--save_kpt", action="store_true",
+        help="save debug keypoints of matching"
+    )
     parser.add_argument(
         '--show_keypoints', action='store_true',
         help='Show the detected keypoints')
     parser.add_argument(
-        '--no_display', action='store_true',
-        help='Do not display images to screen. Useful if running remotely')
+        '--display', action='store_true',
+        help='display images to screen. Useful if running locally')
     parser.add_argument(
         '--force_cpu', action='store_true',
         help='Force pytorch to run in CPU mode.')
-
+    ransac_parser = parser.add_argument_group()
+    ransac_parser.add_argument("--min_sample",type=int,default=5)
+    ransac_parser.add_argument("--ransac_state",default=0)
+    ransac_parser.add_argument("--residual_threshold",type=float,default=3)
     opt = parser.parse_args()
     print(opt)
 
@@ -161,10 +173,10 @@ if __name__ == '__main__':
 
     if opt.output_dir is not None:
         print('==> Will write outputs to {}'.format(opt.output_dir))
-        Path(opt.output_dir).mkdir(exist_ok=True)
+        refresh_dir(opt.output_dir)
 
     # Create a window to display the demo.
-    if not opt.no_display:
+    if opt.display:
         cv2.namedWindow('SuperGlue matches', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('SuperGlue matches', 640*2, 480)
     else:
@@ -215,7 +227,7 @@ if __name__ == '__main__':
             last_frame, frame, kpts0, kpts1, mkpts0, mkpts1, color, text,
             path=None, show_keypoints=opt.show_keypoints, small_text=small_text)
 
-        if not opt.no_display:
+        if opt.display:
             cv2.imshow('SuperGlue matches', out)
             key = chr(cv2.waitKey(1) & 0xFF)
             if key == 'q':
@@ -250,11 +262,17 @@ if __name__ == '__main__':
         if opt.output_dir is not None:
             #stem = 'matches_{:06}_{:06}'.format(last_image_id, vs.i-1)
             stem = 'matches_{:06}_{:06}'.format(stem0, stem1)
-            out_file = str(Path(opt.output_dir, stem + '.png'))
             data_out_file = str(Path(opt.output_dir, stem + ".npz"))
-            print('\nWriting image to {}'.format(out_file))
-            cv2.imwrite(out_file, out)
-            np.savez(data_out_file, kpt0=mkpts0,kpt1=mkpts1)
+            if opt.save_png:
+                out_file = str(Path(opt.output_dir, stem + '.png'))
+                cv2.imwrite(out_file, out)
+                print('\nWriting image to {}'.format(out_file))
+            if opt.save_kpt:
+                np.savez(data_out_file, kpt0=mkpts0,kpt1=mkpts1)
+            R, t, kpt0, kpt1 = step_ransac(opt, mkpts0, mkpts1)
+            res_out_file = str(Path(opt.output_dir, stem + ".txt"))
+            with open(res_out_file,'w') as f:
+                f.write("{:0.4f} {:0.4f} {:0.4f}".format(np.arccos(R[0,0]), t[0], t[1]))
         last_data = {k+'0': pred[k+'1'] for k in keys}
         last_data['image0'] = frame_tensor
         last_frame = frame

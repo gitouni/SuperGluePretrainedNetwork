@@ -1,29 +1,22 @@
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.linear_model import RANSACRegressor
-from models.utils import make_matching_plot
+from utils.viz_utils import make_matching_plot
 import cv2
 import argparse
 import os
 from utils.utils import refresh_dir
+import json
 from tqdm import tqdm
-
 
 def options():
     parser = argparse.ArgumentParser()
     io_parser = parser.add_argument_group()
-    io_parser.add_argument("--img_dir",type=str,default="data/slip/knife1/NS")
-    io_parser.add_argument("--output_pos_dir",type=str,default="res/slip/knife1/NS")
-    io_parser.add_argument("--output_fig_dir",type=str,default="res/slip/knife1/fig")
-    io_parser.add_argument("--viz",type=bool,default=False)
-    feature_parser = parser.add_argument_group()
-    feature_parser.add_argument("--maxCorners",type=int, default=200)
-    feature_parser.add_argument("--qualityLevel",type=float,default=0.05)
-    feature_parser.add_argument("--minDistance",type=int,default=7)
-    feature_parser.add_argument("--blockSize",type=int,default=7)
-    lk_parser = parser.add_argument_group()
-    lk_parser.add_argument("--winSize",type=int, nargs=2, default=[15,15])
-    lk_parser.add_argument("--maxLevel",type=int, default=3)
+    io_parser.add_argument("--img_dir",type=str,default="slip/nail3/markered")
+    io_parser.add_argument("--kpt_dir",type=str,default="res/nail3")
+    io_parser.add_argument("--output_pos_dir",type=str,default="pos/nail3/gt")
+    io_parser.add_argument("--output_fig_dir",type=str,default="debug_fig")
+    io_parser.add_argument("--viz",type=bool,default=True)
     ransac_parser = parser.add_argument_group()
     ransac_parser.add_argument("--min_sample",type=int,default=5)
     ransac_parser.add_argument("--ransac_state",default=0)
@@ -73,19 +66,7 @@ class SolveEstimator(BaseEstimator,RegressorMixin):
     def set_params(self, **params):
         return super().set_params(**params)
 
-def step_optical(args, img1:np.ndarray, img2:np.ndarray):
-    if np.ndim(img1) == 3:
-        gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
-    else:
-        gray1 = img1  # reference copy but read-only
-    if np.ndim(img2) == 3:
-        gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
-    else:
-        gray2 = img2  # reference copy but read-only
-    p0 = cv2.goodFeaturesToTrack(gray1, mask = None, maxCorners=args.maxCorners, qualityLevel=args.qualityLevel, minDistance=args.minDistance, blockSize=args.blockSize)
-    p1, st, err = cv2.calcOpticalFlowPyrLK(gray1, gray2, p0, None, winSize=args.winSize, maxLevel=args.maxLevel, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-    kpt0 = p0[st == 1]
-    kpt1 = p1[st == 1]
+def step_ransac(args, kpt0:np.ndarray, kpt1:np.ndarray):
     base_estimator = SolveEstimator()
     ransac_estimator = RANSACRegressor(estimator=base_estimator, min_samples=args.min_sample, random_state=args.ransac_state, residual_threshold=args.residual_threshold)
     ransac_estimator.fit(kpt0, kpt1)
@@ -97,20 +78,22 @@ def step_optical(args, img1:np.ndarray, img2:np.ndarray):
 
 if __name__ == "__main__":
     args = options()
-    img_files = sorted(os.listdir(args.img_dir))
+    kpt_files = sorted(os.listdir(args.kpt_dir))
     refresh_dir(args.output_pos_dir)
-    if args.viz:
-        refresh_dir(args.output_fig_dir)
-    for name1, name2 in tqdm(zip(img_files[:-1], img_files[1:]),total=len(img_files)-1):
-        name1_core = os.path.splitext(name1)[0]
-        name2_core = os.path.splitext(name2)[0]
-        full_path1 = os.path.join(args.img_dir, name1)
-        full_path2 = os.path.join(args.img_dir, name2)
-        img1 = cv2.imread(os.path.join(args.img_dir, name1))
-        img2 = cv2.imread(os.path.join(args.img_dir, name2))
-        R, t, kpt0, kpt1 = step_optical(args, img1, img2)
-        if args.viz:
-            matched_fig = make_matching_plot(img1, img2, kpt0, kpt1)
-            cv2.imwrite(os.path.join(args.output_fig_dir,"matching_{}_{}.png".format(name1_core, name2_core)), matched_fig)
-        with open(os.path.join(args.output_pos_dir,"matching_{}_{}.txt".format(name1_core, name2_core)), 'w')as f:
+    refresh_dir(args.output_fig_dir)
+    for kpt_file in tqdm(kpt_files):
+        kpt_data = json.load(open(os.path.join(args.kpt_dir, kpt_file)))
+        src_kpt = np.array(kpt_data['src_kpt'], dtype=np.float32)
+        tgt_kpt = np.array(kpt_data['tgt_kpt'], dtype=np.float32)
+        R, t, kpt0, kpt1 = step_ransac(args, src_kpt, tgt_kpt)
+        src_file = kpt_data['src_file']
+        tgt_file = kpt_data['tgt_file']
+        src_core = os.path.splitext(src_file)[0]
+        tgt_core = os.path.splitext(tgt_file)[0]
+        with open(os.path.join(args.output_pos_dir,"matching_{}_{}.txt".format(src_core, tgt_core)), 'w')as f:
             f.write("{:0.4f} {:0.4f} {:0.4f}".format(np.arccos(R[0,0]), t[0], t[1]))
+        if args.viz:
+            img1 = cv2.imread(os.path.join(args.img_dir, src_file))
+            img2 = cv2.imread(os.path.join(args.img_dir, tgt_file))
+            matched_fig = make_matching_plot(img1, img2, kpt0, kpt1)
+            cv2.imwrite(os.path.join(args.output_fig_dir,"matching_{}_{}.png".format(src_core, tgt_core)), matched_fig)
